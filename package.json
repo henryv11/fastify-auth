@@ -1,0 +1,43 @@
+{
+  "name": "@heviir/fastify-auth",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "jest",
+    "build": "tsc"
+  },
+  "files": [
+    "dist/*"
+  ],
+  "repository": "github:henryv11/fastify-auth",
+  "homepage": "https://github.com/henryv11/fastify-auth",
+  "keywords": [
+    "fastify",
+    "auth",
+    "jwt",
+    "authentication",
+    "authorization"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^26.0.22",
+    "@types/jsonwebtoken": "^8.5.1",
+    "@typescript-eslint/eslint-plugin": "^4.21.0",
+    "@typescript-eslint/parser": "^4.21.0",
+    "eslint": "^7.23.0",
+    "eslint-config-prettier": "^8.1.0",
+    "eslint-plugin-prettier": "^3.3.1",
+    "jest": "^26.6.3",
+    "prettier": "^2.2.1",
+    "ts-jest": "^26.5.5",
+    "typescript": "^4.2.3"
+  },
+  "dependencies": {
+    "@heviir/http-errors": "^1.0.2",
+    "fastify": "^3.15.1",
+    "fastify-plugin": "^3.0.0",
+    "jsonwebtoken": "^8.5.1"
+  }
+}
