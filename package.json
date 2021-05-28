@@ -17,9 +17,10 @@
     "auth",
     "jwt",
     "authentication",
-    "authorization"
+    "authorization",
+    "nodejs"
   ],
-  "author": "",
+  "author": "h.viirmae@gmail.com",
   "license": "MIT",
   "devDependencies": {
     "@types/jest": "^26.0.22",
