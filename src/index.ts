@@ -162,7 +162,6 @@ declare module 'fastify' {
     token: DecodedToken | null;
     tokenError: string | '';
     getToken: () => Promise<{ token: FastifyRequest['token']; error: FastifyRequest['tokenError'] }>;
-    ensureToken: () => DecodedToken;
   }
 
   interface RouteOptions {
