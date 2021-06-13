@@ -51,11 +51,11 @@ export default fp(
             ),
           );
         },
-        encodeToken({ roles, sub }) {
+        encodeToken({ roles, sub, session }) {
           if (!privateKey) return Promise.reject(new TypeError('private key is needed to encode token'));
           return new Promise((resolve, reject) =>
             jwt.sign(
-              { sub, roles },
+              { sub, roles, session },
               privateKey,
               { algorithm: ALGORITHM, issuer: ISSUER, expiresIn: '12h', jwtid: JWT_ID },
               (err, encoded) =>
@@ -128,29 +128,33 @@ export default fp(
   { name: 'fastify-auth' },
 );
 
-interface RawDecodedToken {
+export interface TokenPayload {
   sub: string | number;
-  iat: number;
   roles?: string[];
+  session?: string;
 }
 
-interface DecodedToken extends Omit<RawDecodedToken, 'roles'> {
+export interface RawDecodedToken extends TokenPayload {
+  iat: number;
+}
+
+export interface DecodedToken extends Omit<RawDecodedToken, 'roles'> {
   roles: Set<string>;
 }
 
-type Operation = 'create' | 'read' | 'update' | 'delete';
+export type Operation = 'create' | 'read' | 'update' | 'delete';
 
-interface Permissions {
+export interface Permissions {
   [resource: string]: Partial<Record<Operation, string[]>>;
 }
 
-type AuthConfig = string | boolean;
+export type AuthConfig = string | boolean;
 
 declare module 'fastify' {
   interface FastifyInstance {
     auth: {
       decodeToken: (token?: string) => Promise<NonNullable<FastifyRequest['token']>>;
-      encodeToken: (payload: { sub: string; roles?: string[] }) => Promise<string>;
+      encodeToken: (payload: TokenPayload) => Promise<string>;
     };
   }
 
@@ -158,6 +162,7 @@ declare module 'fastify' {
     token: DecodedToken | null;
     tokenError: string | '';
     getToken: () => Promise<{ token: FastifyRequest['token']; error: FastifyRequest['tokenError'] }>;
+    ensureToken: () => DecodedToken;
   }
 
   interface RouteOptions {
