@@ -5,16 +5,6 @@ import fastifyAuth from '../src';
 
 const readFile = promisify(readFileFS);
 
-function getPermissions() {
-  return Promise.resolve({
-    hello: {
-      read: ['user', 'admin'],
-      create: ['admin'],
-      update: ['admin'],
-    },
-  });
-}
-
 function getApp() {
   const app = fastify({
     logger: !true,
@@ -22,7 +12,13 @@ function getApp() {
   app.register(fastifyAuth, {
     privateKey: readFile(__dirname + '/privateKey.pem'),
     publicKey: readFile(__dirname + '/publicKey.pem'),
-    permissions: getPermissions(),
+    permissions: {
+      hello: {
+        read: ['user', 'admin'],
+        create: ['admin'],
+        update: ['admin'],
+      },
+    },
   });
   return app;
 }
