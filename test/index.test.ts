@@ -39,10 +39,10 @@ describe('fastify auth', () => {
     let res = await makeReq();
     expect(res.json().message).toEqual('Unauthorized');
 
-    res = await makeReq(app.auth.encodeToken({ sub: 'blin', roles: ['user'] }));
+    res = await makeReq(app.auth.encodeToken({ sub: 'blin', roles: ['user'], session: '' }));
     expect(res.json().sub).toEqual('blin');
 
-    res = await makeReq(await app.auth.encodeToken({ sub: 'blin' }));
+    res = await makeReq(await app.auth.encodeToken({ sub: 'blin', roles: [], session: '' }));
     expect(res.json().message).toEqual('Forbidden');
   });
 });

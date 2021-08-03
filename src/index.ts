@@ -1,7 +1,8 @@
+/* eslint-disable @typescript-eslint/ban-types */
 import httpErrors from '@heviir/http-errors';
 import { FastifyInstance, FastifyRequest, preValidationHookHandler, RouteOptions } from 'fastify';
 import fp from 'fastify-plugin';
-import * as jwt from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 
 const TOKEN_HEADER_KEY = 'authorization';
 const ALGORITHM: jwt.Algorithm = 'RS512';
@@ -26,55 +27,42 @@ const TOKEN_SCHEMA = {
   description: 'JSON Web Token in format "Bearer [token]',
 };
 
-export default fp(
-  async function fastifyAuth(
-    app,
-    opts: {
-      privateKey?: string | Buffer | Promise<string | Buffer>;
-      publicKey: string | Buffer | Promise<string | Buffer>;
-      permissions: Permissions | Promise<Permissions>;
-    },
-  ) {
-    const [permissions, privateKey, publicKey] = await Promise.all([opts.permissions, opts.privateKey, opts.publicKey]);
-    const auth: FastifyInstance['auth'] = {
-      decodeToken: decodeToken.bind({ publicKey }),
-      encodeToken: encodeToken.bind({ privateKey }),
-      permissions,
-    };
-    app.decorate('auth', auth);
-    app.decorateRequest('token', null);
-    app.decorateRequest('tokenError', '');
-    app.decorateRequest('getToken', getToken);
-    app.addHook('onRoute', handleOnRoute);
-  },
-  { name: 'fastify-auth' },
-);
+export default fp(fastifyAuth, { name: 'fastify-auth' });
 
-function handleOnRoute(this: FastifyInstance, routeOptions: RouteOptions) {
-  const options = routeOptions.auth;
-  if (!options) {
-    return;
-  }
-  const strategy = getStrategy(options, this.auth.permissions);
-  mergeSchema(routeOptions);
-  routeOptions.preValidation = (<preValidationHookHandler[]>[]).concat(async function (req) {
-    const token = await req.getToken();
-    strategy(req, token);
-  }, routeOptions.preValidation || []);
+async function fastifyAuth(
+  app: FastifyInstance,
+  opts: {
+    privateKey?: string | Buffer | Promise<string | Buffer>;
+    publicKey: string | Buffer | Promise<string | Buffer>;
+    permissions: Permissions | Promise<Permissions>;
+  },
+) {
+  const [permissions, privateKey, publicKey] = await Promise.all([opts.permissions, opts.privateKey, opts.publicKey]);
+  app.decorate('auth', {
+    decodeToken: decodeToken.bind({ publicKey }),
+    encodeToken: encodeToken.bind({ privateKey }),
+    permissions,
+  });
+  app.decorateRequest('token', null);
+  app.decorateRequest('tokenError', '');
+  app.decorateRequest('getToken', getToken);
+  app.addHook('onRoute', handleOnRoute);
 }
 
-async function encodeToken(this: { privateKey?: string | Buffer }, { sub, roles, session }: TokenPayload) {
-  if (!this.privateKey) {
+async function encodeToken(
+  this: { privateKey?: string | Buffer },
+  { sub, roles, session, name, phone, email }: TokenPayload,
+) {
+  const privateKey = this.privateKey;
+  if (!privateKey) {
     throw new TypeError('private key is needed to encode token');
   }
   return await new Promise<string>((resolve, reject) =>
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    jwt.sign({ sub, roles, session }, this.privateKey!, ENCODING_OPTIONS, (err, encoded) => {
+    jwt.sign({ sub, roles, session, name, phone, email }, privateKey, ENCODING_OPTIONS, (err, encoded) => {
       if (err || !encoded) {
-        reject(err || new Error('failed to encode token'));
-      } else {
-        resolve(encoded);
+        return reject(err || new Error('failed to encode token'));
       }
+      resolve(encoded);
     }),
   );
 }
@@ -83,19 +71,24 @@ async function decodeToken(this: { publicKey: string | Buffer }, token?: string)
   if (!token) {
     throw new Error('missing token');
   }
-  return await new Promise<DecodedToken>((resolve, reject) =>
+  return await new Promise<DecodedTokenPayload>((resolve, reject) =>
     jwt.verify(token, this.publicKey, DECODING_OPTIONS, (err, decoded) => {
       if (err || !decoded) {
-        reject(err || new Error('failed to decode token'));
-      } else {
-        const { roles, ...rest } = <RawDecodedToken>decoded;
-        resolve(<DecodedToken>{ ...rest, roles: new Set(roles) });
+        return reject(err || new Error('failed to decode token'));
       }
+      if (!isRawDecodedTokenPayload(decoded)) {
+        return reject(new Error('invalid token payload'));
+      }
+      resolve({ ...decoded, roles: new Set(decoded.roles) });
     }),
   );
 }
 
-async function getToken(this: FastifyRequest): ReturnType<FastifyRequest['getToken']> {
+function isRawDecodedTokenPayload(token: {}): token is RawDecodedTokenPayload {
+  return !['roles', 'sub', 'session', 'iat'].some(key => token[<keyof typeof token>key] == null);
+}
+
+async function getToken(this: FastifyRequest): Promise<DecodedTokenPayload> {
   if (this.token) {
     return this.token;
   }
@@ -112,26 +105,48 @@ async function getToken(this: FastifyRequest): ReturnType<FastifyRequest['getTok
   }
 }
 
+function handleOnRoute(this: FastifyInstance, routeOptions: RouteOptions) {
+  const options = routeOptions.auth;
+  if (!options) {
+    return;
+  }
+  const strategy = getStrategy(options);
+  mergeSchema(routeOptions);
+  routeOptions.preValidation = (<preValidationHookHandler[]>[]).concat(async req => {
+    const token = await req.getToken();
+    strategy(req, token);
+  }, routeOptions.preValidation || []);
+}
+
 function getStrategy(
   options: NonNullable<RouteOptions['auth']>,
-  permissions: Permissions,
 ): (req: FastifyRequest, token: NonNullable<FastifyRequest['token']>) => void {
   switch (typeof options) {
     case 'string':
-      const [resource, operation] = options.split(':');
-      if (!resource || !operation) {
-        throw new TypeError(`invalid endpoint auth options ${options}, expected <resource>:<permission>`);
-      }
-      return (_, token) => {
-        if (!permissions[resource][<Operation>operation]?.some(role => token.roles.has(role))) {
-          throw new httpErrors.Forbidden(`user does not have permission to ${operation} resource`);
+      const [resourceOrRole, operation] = options.split(':');
+      if (resourceOrRole) {
+        if (operation) {
+          return (req, token) => {
+            const resourcePermissions = req.server.auth.permissions[resourceOrRole][<Operation>operation];
+            if (resourcePermissions === '*') {
+              return;
+            }
+            if (!resourcePermissions?.some(role => token.roles.has(role))) {
+              throw new httpErrors.Forbidden(`missing permission to ${operation} resource`);
+            }
+          };
         }
-      };
+        return (_, token) => {
+          if (!token.roles.has(resourceOrRole)) {
+            throw new httpErrors.Forbidden(`missing required role`);
+          }
+        };
+      }
+      throw new TypeError(`invalid endpoint auth options ${options}, expected <resource>:<operation> or <role>`);
     case 'boolean':
-    case 'object':
       return () => void 0;
     default:
-      throw new TypeError(`invalid authorization config type ${typeof options}`);
+      throw new TypeError(`invalid endpoint auth options type ${typeof options}`);
   }
 }
 
@@ -139,14 +154,11 @@ function mergeSchema(routeOptions: RouteOptions) {
   routeOptions.schema = {
     ...routeOptions.schema,
     headers: {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...(<any>routeOptions.schema?.headers),
+      ...(<{ headers: {} }>routeOptions.schema?.headers),
       type: 'object',
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      required: [...((<any>routeOptions.schema?.headers)?.required || [])].concat(TOKEN_HEADER_KEY),
+      required: ((<{ required: string[] }>routeOptions.schema?.headers)?.required || []).concat(TOKEN_HEADER_KEY),
       properties: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ...(<any>routeOptions.schema?.headers)?.properties,
+        ...(<{ properties: {} }>routeOptions.schema?.headers)?.properties,
         [TOKEN_HEADER_KEY]: TOKEN_SCHEMA,
       },
     },
@@ -155,22 +167,25 @@ function mergeSchema(routeOptions: RouteOptions) {
 
 export interface TokenPayload {
   sub: string;
-  roles?: string[];
-  session?: string;
+  roles: string[];
+  session: string;
+  name?: string;
+  phone?: string;
+  email?: string;
 }
 
-export interface RawDecodedToken extends TokenPayload {
+export interface RawDecodedTokenPayload extends TokenPayload {
   iat: number;
 }
 
-export interface DecodedToken extends Omit<RawDecodedToken, 'roles'> {
+export interface DecodedTokenPayload extends Omit<RawDecodedTokenPayload, 'roles'> {
   roles: Set<string>;
 }
 
 export type Operation = 'create' | 'read' | 'update' | 'delete';
 
 export interface Permissions {
-  [resource: string]: Partial<Record<Operation, string[]>>;
+  [resource: string]: Partial<Record<Operation, string[] | '*'>>;
 }
 
 export type AuthConfig = string | boolean;
@@ -178,16 +193,16 @@ export type AuthConfig = string | boolean;
 declare module 'fastify' {
   interface FastifyInstance {
     auth: {
-      decodeToken: (rawToken?: string) => Promise<DecodedToken>;
-      encodeToken: (payload: TokenPayload) => Promise<string>;
+      decodeToken: OmitThisParameter<typeof decodeToken>;
+      encodeToken: OmitThisParameter<typeof encodeToken>;
       permissions: Permissions;
     };
   }
 
   interface FastifyRequest {
-    token: DecodedToken | null;
+    token: DecodedTokenPayload | null;
     tokenError: string | '';
-    getToken: () => Promise<DecodedToken>;
+    getToken: OmitThisParameter<typeof getToken>;
   }
 
   interface RouteOptions {
